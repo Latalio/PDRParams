@@ -25,10 +25,6 @@ public class TaskObtainSensorData extends Thread {
     private boolean start = false;
     private boolean finish = false;
 
-
-
-
-
     private enum ProcessState {
         IDLE,
         PRE_OPERATING,
@@ -36,7 +32,6 @@ public class TaskObtainSensorData extends Thread {
         POST_OPERATING,
         STOPPED
     }
-
     private ProcessState mState = ProcessState.IDLE;
 
     public TaskObtainSensorData(MainActivity activity) {
