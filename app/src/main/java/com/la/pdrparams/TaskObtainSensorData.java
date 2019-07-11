@@ -1,6 +1,8 @@
 package com.la.pdrparams;
 
 import android.os.Build;
+import android.os.Handler;
+import android.os.Message;
 import android.util.Log;
 
 import java.io.File;
@@ -15,13 +17,15 @@ public class TaskObtainSensorData extends Thread {
 
     private StringBuilder sb = new StringBuilder();
 
-    private MainActivity mActivity;
+    private final MainActivity mActivity;
     private int mCount = 0;
 
-    private int interval = 50; // 50ms vs. 20Hz
+    private int interval = 1000; // 50ms vs. 20Hz
 
     private boolean start = false;
     private boolean finish = false;
+
+
 
 
 
@@ -41,17 +45,23 @@ public class TaskObtainSensorData extends Thread {
 
     @Override
     public void run() {
+        Log.e(TAG, "[BEGIN] run()");
         for(;;) {
             switch (mState) {
                 case IDLE: idle(); break;
+                case PRE_OPERATING: pre(); break;
                 case OPERATING: oper(); break;
+                case POST_OPERATING: post(); break;
             }
         }
-
     }
 
     private void idle() {
-        // do nothing
+        if (start) {
+            start = false;
+            mState = ProcessState.PRE_OPERATING;
+            MainActivity.sendToast("轨迹记录开始");
+        }
     }
 
     private void pre() {
@@ -66,14 +76,24 @@ public class TaskObtainSensorData extends Thread {
                 .append("accz").append(",")
                 .append("magx").append(",")
                 .append("magy").append(",")
-                .append("magz").append("\n");
-
+                .append("magz").append(",")
+                .append("gyrx").append(",")
+                .append("gyry").append(",")
+                .append("gyrz").append(",")
+                .append("mazimuth").append(",")
+                .append("mpitch").append(",")
+                .append("mroll").append(",")
+                .append("gazimuth").append(",")
+                .append("gpitch").append(",")
+                .append("groll").append("\n");
 
         mState = ProcessState.OPERATING;
     }
 
     private void oper() {
+        int count = 0;
         for(;;) {
+            Log.e(TAG, Integer.toString(count++));
             sb.append(mCount++).append(",")
                     .append(System.currentTimeMillis()).append(",")
                     .append(mActivity.getValueAcc()[0]).append(",")
@@ -81,7 +101,16 @@ public class TaskObtainSensorData extends Thread {
                     .append(mActivity.getValueAcc()[2]).append(",")
                     .append(mActivity.getValueMag()[0]).append(",")
                     .append(mActivity.getValueMag()[1]).append(",")
-                    .append(mActivity.getValueMag()[2]).append("\n");
+                    .append(mActivity.getValueMag()[2]).append(",")
+                    .append(mActivity.getValueGyr()[0]).append(",")
+                    .append(mActivity.getValueGyr()[1]).append(",")
+                    .append(mActivity.getValueGyr()[2]).append(",")
+                    .append(mActivity.getValueMOri()[0]).append(",")
+                    .append(mActivity.getValueMOri()[1]).append(",")
+                    .append(mActivity.getValueMOri()[2]).append(",")
+                    .append(mActivity.getValueGOri()[0]).append(",")
+                    .append(mActivity.getValueGOri()[1]).append(",")
+                    .append(mActivity.getValueGOri()[2]).append("\n");
 
             try {
                 Thread.sleep(interval);
@@ -89,18 +118,27 @@ public class TaskObtainSensorData extends Thread {
                 e.printStackTrace();
             }
 
-            if (finish) mState = ProcessState.POST_OPERATING;
+            if (finish) {
+                finish = false;
+                mState = ProcessState.POST_OPERATING;
+                break;
+            }
         }
     }
 
     private void post() {
+        mState = ProcessState.IDLE;
+
         String dirpath = MainActivity.PATH;
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy,MM,dd,HH,mm,ss");
         String filename = "/si " + sdf.format(new Date()) + ".txt";
 
         try {
             File file = new File(dirpath + filename);
-            if (MainActivity.fileExist(file)) return;
+            if (MainActivity.fileExist(file)) {
+                MainActivity.sendToast("文件创建失败！");
+                return;
+            }
 
             FileWriter writer = new FileWriter(file);
             Log.e(TAG, dirpath + filename);
@@ -108,17 +146,24 @@ public class TaskObtainSensorData extends Thread {
             writer.close();
         } catch (IOException e) {
             e.printStackTrace();
-            return;
+            MainActivity.sendToast("文件存储失败！");
         }
-        return;
+
+        MainActivity.sendToast("轨迹记录完成");
     }
 
-    public void enableStart() {
+    void enableStart() {
         start = true;
     }
 
-    public void enableFinish() {
+    void enableFinish() {
         finish = true;
     }
+
+    boolean isIDLE() {
+        return mState == ProcessState.IDLE;
+    }
+
+
 
 }
