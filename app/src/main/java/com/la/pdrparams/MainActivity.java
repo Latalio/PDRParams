@@ -14,24 +14,39 @@ import android.os.Handler;
 import android.os.Message;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity implements SensorEventListener {
     private final String TAG = MainActivity.class.getSimpleName();
     public static final String PATH = "/sdcard/PDRParams";
+    public static final String PATH_SENSOR_DATA = PATH + "/sensorData";
+    public static final String PATH_WIFI_RSS = PATH + "/wifiRss";
+    private static final SimpleDateFormat statusDateFormat = new SimpleDateFormat("[hh:mm:ss.SSS] ");
+
+    /**
+     * Widgets
+     */
     TextView mTxtMonitor;
+    TextView mTxtStatus;
     Button mBtnSensorInfo;
     Button mBtnStart;
     Button mBtnFinish;
     Button mBtnWifiScan;
+
+    // Setting region
+    EditText mInputSampleFreq;
 
     static Handler mHandler;
 
@@ -60,39 +75,48 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private float[] mGRotMat = new float[9];
 
     WifiManager mWifiManager;
-    BroadcastReceiver mWifiScanReceiver;
+    private boolean mOriginalWifiState;
 
-    private final int NUM_SENSOR = 13;
 
     private TaskObtainSensorData mTaskSensorData;
+    private TaskObtainWiFiRSSData mTaskWifiRssData;
 
     static final int MSGTYPE_TOAST = 101;
+    static final int MSGTYPE_STATUS = 102;
+    static final int MSGTYPE_STATUS_INFO = 103;
+    static final int MSGTYPE_STATUS_ERROR = 104;
 
 
-    long wifiScanSt = 0;
+    /**
+     * tmp
+     */
 
-
+    /**
+     * Life cycle methods
+     */
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        File file = new File(PATH);
-        if (!file.exists()) {
-            file.mkdir();
-        }
+
         mHandler = new MessageHandler(this);
 
+        // todo 在app启动后删除文件目录会出错
+        checkDirs();
+
         mTxtMonitor = findViewById(R.id.txt_monitor);
+        mTxtStatus = findViewById(R.id.txt_status);
+        mTxtStatus.setMovementMethod(ScrollingMovementMethod.getInstance());
         mBtnSensorInfo = findViewById(R.id.btn_sensor_info);
         mBtnStart = findViewById(R.id.btn_start);
         mBtnFinish = findViewById(R.id.btn_finish);
-        mBtnWifiScan = findViewById(R.id.btn_wifi_scan);
 
         mBtnSensorInfo.setOnClickListener(new BtnSensorInfoListener());
         mBtnStart.setOnClickListener(new BtnStartListener());
         mBtnFinish.setOnClickListener(new BtnFinishListener());
-        mBtnWifiScan.setOnClickListener(new BtnWifiScanListener());
+
+        mInputSampleFreq = findViewById(R.id.input_sample_freq);
 
         mSensorManager = (SensorManager)getSystemService(Context.SENSOR_SERVICE);
         mAccelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
@@ -102,70 +126,49 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         mGameRotationVector = mSensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
 
         mWifiManager = (WifiManager)getSystemService(Context.WIFI_SERVICE);
-
-        mWifiScanReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context c, Intent intent) {
-                boolean success = intent.getBooleanExtra(
-                        WifiManager.EXTRA_RESULTS_UPDATED, false);
-                Log.e(TAG, "Broadcast Received.");
-
-                if (success) {
-                    scanSuccess();
-                } else {
-                    // scan failure handling
-                    scanFailure();
-                }
-            }
-        };
-
-        IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
-        registerReceiver(mWifiScanReceiver, intentFilter);
-        Log.e(TAG, "Broadcast Registered.");
+        mOriginalWifiState = mWifiManager.isWifiEnabled();
 
         mTaskSensorData = new TaskObtainSensorData(MainActivity.this);
         mTaskSensorData.start();
+        mTaskWifiRssData = new TaskObtainWiFiRSSData(mWifiManager);
+        mTaskWifiRssData.start();
 
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-//        mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_GAME);
-//        mSensorManager.registerListener(this, mMagneticField, SensorManager.SENSOR_DELAY_GAME);
-//        mSensorManager.registerListener(this, mGyroscope, SensorManager.SENSOR_DELAY_GAME);
-//        mSensorManager.registerListener(this, mRotationVector, SensorManager.SENSOR_DELAY_GAME);
-//        mSensorManager.registerListener(this, mGameRotationVector, SensorManager.SENSOR_DELAY_GAME);
+        // register sensors
+        mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_GAME);
+        mSensorManager.registerListener(this, mMagneticField, SensorManager.SENSOR_DELAY_GAME);
+        mSensorManager.registerListener(this, mGyroscope, SensorManager.SENSOR_DELAY_GAME);
+        mSensorManager.registerListener(this, mRotationVector, SensorManager.SENSOR_DELAY_GAME);
+        mSensorManager.registerListener(this, mGameRotationVector, SensorManager.SENSOR_DELAY_GAME);
 
-
-
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        unregisterReceiver(mWifiScanReceiver);
-    }
-
-    private void scanSuccess() {
-        List<ScanResult> results = mWifiManager.getScanResults();
-        Log.e(TAG, "scan success and the duration is: " + (System.currentTimeMillis()-wifiScanSt));
-    }
-
-    private void scanFailure() {
-        // handle failure: new scan did NOT succeed
-        // consider using old scan results: these are the OLD results!
-        List<ScanResult> results = mWifiManager.getScanResults();
-        Log.e(TAG, "scan failure and the duration is: " + (System.currentTimeMillis()-wifiScanSt));
-
+        // enable WiFi
+        if(!mOriginalWifiState) {
+            mWifiManager.setWifiEnabled(true);
+        }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        // unregister sensors
         mSensorManager.unregisterListener(this);
+
+        // recover wifi state
+        mWifiManager.setWifiEnabled(mOriginalWifiState);
     }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+    }
+
+    /**
+     * Sensor-related methods
+     */
 
     @Override
     public final void onAccuracyChanged(Sensor sensor, int accuracy) {
@@ -212,7 +215,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
 
     /**
-     * button listeners.
+     * Button listeners.
      */
     private class BtnSensorInfoListener implements View.OnClickListener {
         @Override
@@ -224,8 +227,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private class BtnStartListener implements View.OnClickListener {
         @Override
         public void onClick(View v) {
-            if (mTaskSensorData.isIDLE()) {
+            if (mTaskSensorData.isIDLE()&&mTaskWifiRssData.isIDLE()) {
+                int freq = Integer.parseInt(mInputSampleFreq.getText().toString());
+                mTaskSensorData.setFrequency(freq);
+                mTaskWifiRssData.setFrequency(freq);
                 mTaskSensorData.enableStart();
+                mTaskWifiRssData.enableStart();
+
             } else {
                 Toast.makeText(MainActivity.this, "轨迹记录中，勿重复启动！",Toast.LENGTH_SHORT).show();
             }
@@ -236,23 +244,11 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         @Override
         public void onClick(View v) {
             mTaskSensorData.enableFinish();
+            mTaskWifiRssData.enableFinish();
         }
 
     }
 
-    private class BtnWifiScanListener implements View.OnClickListener {
-        @Override
-        public void onClick(View v) {
-            wifiScanSt = System.currentTimeMillis();
-            boolean success = mWifiManager.startScan();
-            if (success) {
-                scanSuccess();
-            } else {
-                scanFailure();
-            }
-        }
-
-    }
 
     /**
      * sensor value getter
@@ -278,21 +274,49 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     }
 
     public static boolean fileExist(File file) throws IOException {
-        if (!file.exists()) {
-            if (!file.getParentFile().mkdirs()) {
-                return false;
-            }
-            if (!file.createNewFile()) {
-                return false;
-            }
-        }
-        return true;
+        return file.exists() || (file.getParentFile().mkdir() && file.createNewFile());
     }
+
+    /**
+     * Message showing methods.
+     */
 
     static void sendToast(String msg) {
         Message message = Message.obtain();
         message.what = MainActivity.MSGTYPE_TOAST;
         message.obj = msg;
         mHandler.sendMessage(message);
+    }
+
+    static synchronized void info(String msg) {
+        msg = String.format("<font color=\"#00FF00\">%s<br>",statusDateFormat.format(new Date()) + msg);
+        Message message = Message.obtain();
+        message.what = MainActivity.MSGTYPE_STATUS;
+        message.obj = msg;
+        mHandler.sendMessage(message);
+    }
+
+    static synchronized void error(String msg) {
+        msg = String.format("<font color=\"#FF0000\">%s<br>",statusDateFormat.format(new Date()) + msg);
+        Message message = Message.obtain();
+        message.what = MainActivity.MSGTYPE_STATUS;
+        message.obj = msg;
+        mHandler.sendMessage(message);
+    }
+
+    private void checkDirs() {
+        if (!checkDir(new File(PATH))) {
+            MainActivity.error("Root directory creation failed!");
+        }
+        if (!checkDir(new File(PATH_SENSOR_DATA))) {
+            MainActivity.error("Sensor data directory creation failed!");
+        }
+        if (!checkDir(new File(PATH_WIFI_RSS))) {
+            MainActivity.error("Wifi rss directory creation failed!");
+        }
+    }
+
+    private boolean checkDir(File file) {
+        return file.exists() || file.mkdir();
     }
 }

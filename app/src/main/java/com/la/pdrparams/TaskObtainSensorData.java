@@ -1,8 +1,6 @@
 package com.la.pdrparams;
 
 import android.os.Build;
-import android.os.Handler;
-import android.os.Message;
 import android.util.Log;
 
 import java.io.File;
@@ -11,55 +9,26 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
-public class TaskObtainSensorData extends Thread {
+class TaskObtainSensorData extends TaskThread {
     // todo How to ensure that only one TaskSensorData Thread is running?
-    private final String TAG = MainActivity.class.getSimpleName();
-
-    private StringBuilder sb = new StringBuilder();
-
+    private final String TAG = TaskObtainSensorData.class.getSimpleName();
     private final MainActivity mActivity;
-    private int mCount = 0;
 
-    private int interval = 1000; // 50ms vs. 20Hz
-
-    private boolean start = false;
-    private boolean finish = false;
-
-    private enum ProcessState {
-        IDLE,
-        PRE_OPERATING,
-        OPERATING,
-        POST_OPERATING,
-        STOPPED
-    }
-    private ProcessState mState = ProcessState.IDLE;
-
-    public TaskObtainSensorData(MainActivity activity) {
+    TaskObtainSensorData(MainActivity activity) {
         mActivity = activity;
     }
 
     @Override
-    public void run() {
-        Log.e(TAG, "[BEGIN] run()");
-        for(;;) {
-            switch (mState) {
-                case IDLE: idle(); break;
-                case PRE_OPERATING: pre(); break;
-                case OPERATING: oper(); break;
-                case POST_OPERATING: post(); break;
-            }
-        }
-    }
-
-    private void idle() {
+    void idle() {
         if (start) {
             start = false;
             mState = ProcessState.PRE_OPERATING;
-            MainActivity.sendToast("轨迹记录开始");
+            MainActivity.info("Sensor data obtaining...");
         }
     }
 
-    private void pre() {
+    @Override
+    void pre() {
         mCount = 0;
 
         sb.delete(0, sb.length());
@@ -85,10 +54,9 @@ public class TaskObtainSensorData extends Thread {
         mState = ProcessState.OPERATING;
     }
 
-    private void oper() {
-        int count = 0;
+    @Override
+    void oper() {
         for(;;) {
-            Log.e(TAG, Integer.toString(count++));
             sb.append(mCount++).append(",")
                     .append(System.currentTimeMillis()).append(",")
                     .append(mActivity.getValueAcc()[0]).append(",")
@@ -121,44 +89,28 @@ public class TaskObtainSensorData extends Thread {
         }
     }
 
-    private void post() {
+    @Override
+    void post() {
         mState = ProcessState.IDLE;
 
-        String dirpath = MainActivity.PATH;
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy,MM,dd,HH,mm,ss");
-        String filename = "/si " + sdf.format(new Date()) + ".txt";
+        String dirpath = MainActivity.PATH_SENSOR_DATA;
+        String filename = "/sd " + filenameDF.format(new Date()) + ".txt";
 
         try {
             File file = new File(dirpath + filename);
-            if (MainActivity.fileExist(file)) {
-                MainActivity.sendToast("文件创建失败！");
+            if (!file.createNewFile()) {
+                MainActivity.error("Sensor file creation failed!");
                 return;
             }
 
             FileWriter writer = new FileWriter(file);
-            Log.e(TAG, dirpath + filename);
             writer.write(sb.toString());
             writer.close();
         } catch (IOException e) {
             e.printStackTrace();
-            MainActivity.sendToast("文件存储失败！");
+            MainActivity.error("Sensor file storage failed!");
         }
 
-        MainActivity.sendToast("轨迹记录完成");
+        MainActivity.info("Sensor data obtained.");
     }
-
-    void enableStart() {
-        start = true;
-    }
-
-    void enableFinish() {
-        finish = true;
-    }
-
-    boolean isIDLE() {
-        return mState == ProcessState.IDLE;
-    }
-
-
-
 }
